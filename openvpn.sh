@@ -10,7 +10,38 @@ protocol=udp
 port=1194
 days_cert=36500
 server_number=$(printf "%03.0f" $(cut -d'.' -f 2 <<< $server))
-public_ip=8.209.64.85
+public_ip=0.0.0.0
+
+# If system has a single IPv4, it is selected automatically. Else, ask the user
+if [[ $(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}' | grep -vEc "${server:0:2}(\.[0-9]{1,3}){3}") -eq 1 ]]; then
+	ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
+else
+	number_of_ip=$(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}' | grep -vEc "${server:0:2}(\.[0-9]{1,3}){3}")
+	echo
+	echo "Which IPv4 address should be used?"
+	ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | nl -s ') '
+	read -p "IPv4 address [1]: " ip_number
+	until [[ -z "$ip_number" || "$ip_number" =~ ^[0-9]+$ && "$ip_number" -le "$number_of_ip" ]]; do
+		echo "$ip_number: invalid selection."
+		read -p "IPv4 address [1]: " ip_number
+	done
+	[[ -z "$ip_number" ]] && ip_number="1"
+	ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sed -n "$ip_number"p)
+fi
+# If $ip is a private IP address, the server must be behind NAT
+if echo "$ip" | grep -qE '^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168)'; then
+	echo
+	echo "This server is behind NAT. What is the public IPv4 address or hostname?"
+	# Get public IP and sanitize with grep
+	get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
+	read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
+	# If the checkip service is unavailable and user didn't provide input, ask again
+	until [[ -n "$get_public_ip" || -n "$public_ip" ]]; do
+		echo "Invalid input."
+		read -p "Public IPv4 address / hostname: " public_ip
+	done
+	[[ -z "$public_ip" ]] && public_ip="$get_public_ip"
+fi
 
 if [[ $submask =~ 255.255.255.0 ]]; then 
 	subnet=24
@@ -22,12 +53,13 @@ else
 fi
 echo "$subnet"
 
-echo "Indirizzo IP del server VPN: "$server
-echo "Indirizzo IP della maschera VPN: "$submask
+echo "Indirizzo IP VPN: "$server
+echo "Maschera VPN: "$submask
 echo "Sottorete: "$subnet
 echo "Protocollo : "$protocol
 echo "Porta: "$port
 echo "Giorni validità certificato: "$days_cert
+echo "Indirizzo IP eth0: "$ip
 echo "Indirizzo IP pubblico: "$public_ip
 
 # Detect Debian users running the script with "sh" instead of bash
@@ -165,36 +197,6 @@ iroute ${client_ip:0:${#client_ip}-1}0 255.255.255.0" > /etc/openvpn/server/ccd/
 }
 
 new_server () {
-	# If system has a single IPv4, it is selected automatically. Else, ask the user
-	if [[ $(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}' | grep -vEc "${server:0:2}(\.[0-9]{1,3}){3}") -eq 1 ]]; then
-		ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
-	else
-		number_of_ip=$(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}' | grep -vEc "${server:0:2}(\.[0-9]{1,3}){3}")
-		echo
-		echo "Which IPv4 address should be used?"
-		ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | nl -s ') '
-		read -p "IPv4 address [1]: " ip_number
-		until [[ -z "$ip_number" || "$ip_number" =~ ^[0-9]+$ && "$ip_number" -le "$number_of_ip" ]]; do
-			echo "$ip_number: invalid selection."
-			read -p "IPv4 address [1]: " ip_number
-		done
-		[[ -z "$ip_number" ]] && ip_number="1"
-		ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | grep -vE "${server:0:2}(\.[0-9]{1,3}){3}" | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sed -n "$ip_number"p)
-	fi
-	# If $ip is a private IP address, the server must be behind NAT
-	if echo "$ip" | grep -qE '^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168)'; then
-		echo
-		echo "This server is behind NAT. What is the public IPv4 address or hostname?"
-		# Get public IP and sanitize with grep
-		get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
-		read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
-		# If the checkip service is unavailable and user didn't provide input, ask again
-		until [[ -n "$get_public_ip" || -n "$public_ip" ]]; do
-			echo "Invalid input."
-			read -p "Public IPv4 address / hostname: " public_ip
-		done
-		[[ -z "$public_ip" ]] && public_ip="$get_public_ip"
-	fi
 	# Generate server.conf
 	echo "port $port
 proto $protocol
