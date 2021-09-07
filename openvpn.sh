@@ -1,8 +1,4 @@
 #!/bin/bash
-#
-# https://github.com/Nyr/openvpn-install
-#
-# Copyright (c) 2013 Nyr. Released under the MIT License.
 
 server=10.0.0.0
 submask=255.255.0.0
